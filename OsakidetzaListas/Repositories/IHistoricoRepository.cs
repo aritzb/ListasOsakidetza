@@ -8,5 +8,6 @@ public interface IHistoricoRepository
     Task<List<HistoricoLista>> GetHistoricoPorDniAsync(string dni);
     Task<List<HistoricoLista>> GetUltimoSnapshotAsync();
     Task<List<HistoricoLista>> GetCambiosPosicionAsync(string dni);
+    Task<List<ContratacionCambio>> GetCambiosContratacionAsync(string categoria);
     Task<int> GetTotalSnapshotsAsync();
 }

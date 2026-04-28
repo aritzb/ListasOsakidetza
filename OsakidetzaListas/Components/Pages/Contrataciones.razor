@@ -1,0 +1,249 @@
+@page "/contrataciones"
+@rendermode @(new InteractiveServerRenderMode())
+@using OsakidetzaListas.Models
+@using OsakidetzaListas.Repositories
+@inject IHistoricoRepository HistoricoRepo
+
+<PageTitle>Contrataciones — Osakidetza</PageTitle>
+
+<h2 class="mb-1">📑 Contrataciones</h2>
+<p class="text-muted mb-3">
+    Histórico de cambios de estado por persona dentro de un tipo de lista.
+    Cada bloque corresponde a un refresco real de la API.
+</p>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex gap-3 flex-wrap align-items-end">
+            <div style="min-width:260px">
+                <label class="form-label small fw-bold mb-1">Tipo de lista</label>
+                <select class="form-select" @bind="categoriaSeleccionada" @bind:after="OnCategoriaChanged">
+                    <option value="">— Selecciona un tipo de lista —</option>
+                    @foreach (var cat in categorias)
+                    {
+                        <option value="@cat">@cat</option>
+                    }
+                </select>
+            </div>
+
+            @if (!string.IsNullOrEmpty(categoriaSeleccionada))
+            {
+                <div style="min-width:280px">
+                    <label class="form-label small fw-bold mb-1">Buscar persona</label>
+                    <input class="form-control"
+                           placeholder="Nombre, DNI o centro..."
+                           @bind="textoBusqueda" @bind:event="oninput" />
+                </div>
+
+                <div class="ms-auto d-flex gap-2 flex-wrap">
+                    <button class="btn btn-outline-secondary" @onclick="Recargar" disabled="@cargando">
+                        ♻️ Recargar
+                    </button>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (cargando)
+{
+    <div class="card mb-3 border-primary">
+        <div class="card-body d-flex align-items-center gap-3">
+            <div class="spinner-border text-primary" role="status"></div>
+            <div>
+                <div class="fw-bold">Cargando histórico de contrataciones...</div>
+                <div class="text-muted small">Preparando cambios por persona.</div>
+            </div>
+        </div>
+    </div>
+}
+else if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">⚠️ @error</div>
+}
+else if (string.IsNullOrEmpty(categoriaSeleccionada))
+{
+    <div class="alert alert-info">👆 Selecciona un tipo de lista para ver su histórico de cambios.</div>
+}
+else if (!cambiosFiltrados.Any())
+{
+    <div class="alert alert-info">
+        No hay cambios de estado registrados para <strong>@categoriaSeleccionada</strong> con ese filtro.
+    </div>
+}
+else
+{
+    var cambiosVisibles = CambiosVisibles.ToList();
+    <div class="row g-2 mb-3">
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-primary h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-primary">@cambiosVisibles.Count</h4>
+                    <small class="text-muted">Cambios</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-info h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-info">@cambiosVisibles.Select(x => x.Dni).Distinct().Count()</h4>
+                    <small class="text-muted">Personas afectadas</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-success h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-success">@cambiosVisibles.Count(x => x.EstadoAnteriorOcupado && !x.EstadoActualOcupado)</h4>
+                    <small class="text-muted">Ocupado → Libre</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-warning h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-warning">@cambiosVisibles.Count(x => !x.EstadoAnteriorOcupado && x.EstadoActualOcupado)</h4>
+                    <small class="text-muted">Libre → Ocupado</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @foreach (var grupoRefresco in cambiosVisibles
+        .GroupBy(x => x.FechaConsulta)
+        .OrderByDescending(g => g.Key))
+    {
+        var cambiosRefresco = grupoRefresco.ToList();
+        var visibles = cambiosRefresco.Where(PasaFiltro).OrderBy(x => x.NombreCompleto).ThenBy(x => x.Dni).ToList();
+        if (!visibles.Any())
+        {
+            continue;
+        }
+        <div class="card mb-3">
+            <div class="card-header d-flex align-items-center gap-2 flex-wrap">
+                <span class="badge bg-secondary">@categoriaSeleccionada</span>
+                <strong>@grupoRefresco.Key.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</strong>
+                <span class="badge bg-success">@cambiosRefresco.Count(x => x.EstadoAnteriorOcupado && !x.EstadoActualOcupado) a libre</span>
+                <span class="badge bg-warning text-dark">@cambiosRefresco.Count(x => !x.EstadoAnteriorOcupado && x.EstadoActualOcupado) a ocupado</span>
+                <span class="text-muted small ms-auto">@cambiosRefresco.Count cambios reales</span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Persona</th>
+                            <th>DNI</th>
+                            <th>Centro</th>
+                            <th class="text-center">OSIs</th>
+                            <th>Tipo</th>
+                            <th class="text-center">Antes</th>
+                            <th class="text-center">Después</th>
+                            <th class="text-center">Cambio</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var cambio in visibles)
+                        {
+                            <tr class="@(cambio.EstadoActualOcupado ? "table-warning" : "table-success")">
+                                <td class="fw-bold">@cambio.NombreCompleto</td>
+                                <td><code class="small">@cambio.Dni</code></td>
+                                <td title="@cambio.Zdespl">@cambio.Zdespl</td>
+                                <td class="text-center"><span class="badge bg-primary">@cambio.CentrosTexto</span></td>
+                                <td>
+                                    <span class="badge @(cambio.Ztconc == "I" ? "bg-success" : "bg-warning text-dark")">
+                                        @(cambio.Ztconc == "I" ? "Interinidad" : "Lista corta")
+                                    </span>
+                                </td>
+                                <td class="text-center">@cambio.EstadoAnteriorTexto</td>
+                                <td class="text-center">@cambio.EstadoActualTexto</td>
+                                <td class="text-center fw-bold">@cambio.CambioTexto</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<string> categorias = [];
+    private string categoriaSeleccionada = "";
+    private string textoBusqueda = "";
+    private bool cargando = false;
+    private string? error;
+    private List<ContratacionCambio> cambios = [];
+
+    private IEnumerable<ContratacionCambio> cambiosFiltrados => cambios.Where(PasaFiltro);
+    private IEnumerable<ContratacionCambio> CambiosVisibles => cambios.Where(PasaFiltro);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CargarCategoriasAsync();
+        if (categorias.Any())
+        {
+            categoriaSeleccionada = categorias.First();
+            await CargarCambiosAsync();
+        }
+    }
+
+    private bool PasaFiltro(ContratacionCambio cambio)
+    {
+        var termino = textoBusqueda.Trim();
+        if (string.IsNullOrWhiteSpace(termino))
+        {
+            return true;
+        }
+
+        return cambio.NombreCompleto.Contains(termino, StringComparison.OrdinalIgnoreCase)
+            || cambio.Dni.Contains(termino, StringComparison.OrdinalIgnoreCase)
+            || cambio.Zdespl.Contains(termino, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task CargarCategoriasAsync()
+    {
+        var ultimoSnapshot = await HistoricoRepo.GetUltimoSnapshotAsync();
+        categorias = ultimoSnapshot
+            .Select(x => x.Zdesca)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+    }
+
+    private async Task OnCategoriaChanged()
+    {
+        textoBusqueda = string.Empty;
+        await CargarCambiosAsync();
+    }
+
+    private async Task Recargar()
+    {
+        await CargarCategoriasAsync();
+        await CargarCambiosAsync();
+    }
+
+    private async Task CargarCambiosAsync()
+    {
+        error = null;
+        cambios = [];
+
+        if (string.IsNullOrWhiteSpace(categoriaSeleccionada))
+        {
+            return;
+        }
+
+        cargando = true;
+        try
+        {
+            cambios = await HistoricoRepo.GetCambiosContratacionAsync(categoriaSeleccionada);
+        }
+        catch (Exception ex)
+        {
+            error = $"Error al cargar contrataciones: {ex.Message}";
+        }
+        finally
+        {
+            cargando = false;
+        }
+    }
+}

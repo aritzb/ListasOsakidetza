@@ -101,6 +101,76 @@ public class EfHistoricoRepository(AppDbContext db) : IHistoricoRepository
         return cambios;
     }
 
+    public async Task<List<ContratacionCambio>> GetCambiosContratacionAsync(string categoria)
+    {
+        var historial = await db.Historico
+            .Where(x => x.Zdesca == categoria)
+            .OrderBy(x => x.Dni)
+            .ThenBy(x => x.Zdespl)
+            .ThenBy(x => x.Ztconc)
+            .ThenBy(x => x.FechaConsulta)
+            .ToListAsync();
+
+        var cambios = new List<ContratacionCambio>();
+
+        foreach (var grupo in historial.GroupBy(x => new { x.Dni, x.Zdespl, x.Ztconc }))
+        {
+            var registros = grupo.OrderBy(x => x.FechaConsulta).ToList();
+
+            for (var i = 1; i < registros.Count; i++)
+            {
+                var prev = registros[i - 1];
+                var curr = registros[i];
+
+                if (prev.EstaOcupado == curr.EstaOcupado)
+                {
+                    continue;
+                }
+
+                cambios.Add(new ContratacionCambio
+                {
+                    FechaConsulta = curr.FechaConsulta,
+                    Dni = curr.Dni,
+                    NombreCompleto = curr.NombreCompleto,
+                    Zdesca = curr.Zdesca,
+                    Zdespl = curr.Zdespl,
+                    Ztconc = curr.Ztconc,
+                    EstadoAnteriorOcupado = prev.EstaOcupado,
+                    EstadoActualOcupado = curr.EstaOcupado
+                });
+            }
+        }
+
+        return cambios
+            .GroupBy(x => new
+            {
+                x.Dni,
+                x.FechaConsulta,
+                x.EstadoAnteriorOcupado,
+                x.EstadoActualOcupado
+            })
+            .Select(g =>
+            {
+                var primero = g.First();
+                return new ContratacionCambio
+                {
+                    FechaConsulta = primero.FechaConsulta,
+                    Dni = primero.Dni,
+                    NombreCompleto = primero.NombreCompleto,
+                    Zdesca = primero.Zdesca,
+                    Zdespl = string.Join(" · ", g.Select(x => x.Zdespl).Distinct().Take(3)),
+                    Ztconc = primero.Ztconc,
+                    EstadoAnteriorOcupado = primero.EstadoAnteriorOcupado,
+                    EstadoActualOcupado = primero.EstadoActualOcupado,
+                    CentrosAfectados = g.Select(x => x.Zdespl).Distinct().Count()
+                };
+            })
+            .OrderByDescending(x => x.FechaConsulta)
+            .ThenBy(x => x.NombreCompleto)
+            .ThenBy(x => x.Dni)
+            .ToList();
+    }
+
     public async Task<int> GetTotalSnapshotsAsync() =>
      await db.Historico.CountAsync();
 }
