@@ -14,9 +14,30 @@
 
 @if (cargando)
 {
-    <div class="d-flex align-items-center gap-2 my-4">
-        <div class="spinner-border text-primary" role="status"></div>
-        <span>Consultando la API de Osakidetza...</span>
+    <div class="card mb-3 border-primary">
+        <div class="card-body d-flex align-items-center gap-3 flex-wrap">
+            <div class="spinner-border text-primary" role="status"></div>
+            <div>
+                <div class="fw-bold">Consultando la API de Osakidetza...</div>
+                <div class="text-muted small">
+                    @if (progresoTotal > 0)
+                    {
+                        <span>@progresoConsultados/@progresoTotal consultados</span>
+                        <span class="mx-1">·</span>
+                        <span>@Math.Max(0, progresoTotal - progresoConsultados) pendientes</span>
+                        @if (!string.IsNullOrWhiteSpace(dniConsultando))
+                        {
+                            <span class="mx-1">·</span>
+                            <code>@dniConsultando</code>
+                        }
+                    }
+                    else
+                    {
+                        <span>Preparando consulta...</span>
+                    }
+                </div>
+            </div>
+        </div>
     </div>
 }
 else if (error != null)
@@ -339,6 +360,9 @@ else if (error != null)
 
     private DateTime? ultimaActualizacion;
     private int totalSnapshots = 0;
+    private int progresoConsultados = 0;
+    private int progresoTotal = 0;
+    private string? dniConsultando;
 
     private bool mostrarHistorico = false;
     private bool cargandoHistorico = false;
@@ -434,16 +458,31 @@ else if (error != null)
 
     private async Task Recargar()
     {
-        cargando = true; error = null; StateHasChanged();
+        cargando = true;
+        error = null;
+        progresoConsultados = 0;
+        progresoTotal = OsakidetzaService.Dnis.Count;
+        dniConsultando = null;
+        StateHasChanged();
         try
         {
-            todasLasListas      = await OsakidetzaService.GetTodasLasListasAsync();
+            todasLasListas = await OsakidetzaService.GetTodasLasListasAsync(async (consultados, total, dni) =>
+            {
+                progresoConsultados = consultados;
+                progresoTotal = total;
+                dniConsultando = dni;
+                await InvokeAsync(StateHasChanged);
+            });
             ultimaActualizacion = DateTime.UtcNow;
             await HistoricoRepo.GuardarSnapshotAsync(todasLasListas);
             totalSnapshots      = await HistoricoRepo.GetTotalSnapshotsAsync();
         }
         catch (Exception ex) { error = $"Error al cargar datos: {ex.Message}"; }
-        finally { cargando = false; }
+        finally
+        {
+            cargando = false;
+            dniConsultando = null;
+        }
     }
 
     private async Task RecargarJson()

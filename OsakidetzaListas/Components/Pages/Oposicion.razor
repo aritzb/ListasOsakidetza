@@ -49,6 +49,28 @@
                            @bind="textoBusqueda" @bind:event="oninput" />
                 </div>
 
+                <div style="min-width:280px">
+                    <label class="form-label small fw-bold mb-1">Ir a una fila</label>
+                    <div class="input-group">
+                        <input class="form-control" placeholder="DNI o nombre..."
+                               @bind="textoFoco" @bind:event="oninput"
+                               @onkeydown="BuscarFilaConEnter" />
+                        <button class="btn btn-outline-primary" @onclick="IrAFilaObjetivo">
+                            Ir
+                        </button>
+                        <button class="btn btn-outline-secondary" @onclick="LimpiarFoco"
+                                disabled="@string.IsNullOrWhiteSpace(textoFoco) && string.IsNullOrWhiteSpace(dniEnFoco)">
+                            Limpiar
+                        </button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(mensajeFoco))
+                    {
+                        <div class="small mt-1 @(focoNoEncontrado ? "text-danger" : "text-muted")">
+                            @mensajeFoco
+                        </div>
+                    }
+                </div>
+
                 <div>
                     <label class="form-label small fw-bold mb-1">Puntuación</label>
                     <div class="btn-group btn-group-sm">
@@ -177,9 +199,16 @@
                     {
                         var sacaPlaza = numPlazas > 0 && pos <= numPlazas;
                         var esBorde   = numPlazas > 0 && pos == numPlazas;
-                        var rowClass  = sacaPlaza ? "table-success" : "";
+                        var esFoco    = !string.IsNullOrWhiteSpace(dniEnFoco) &&
+                                        item.Dni.Equals(dniEnFoco, StringComparison.OrdinalIgnoreCase);
+                        var rowClass  = string.Join(" ", new[]
+                        {
+                            sacaPlaza ? "table-success" : "",
+                            esFoco ? "tabla-foco" : ""
+                        }.Where(x => !string.IsNullOrWhiteSpace(x)));
 
-                        <tr class="@rowClass @(esBorde ? "border-bottom border-3 border-danger" : "")">
+                        <tr id="@($"fila-{item.Dni}")"
+                            class="@rowClass @(esBorde ? "border-bottom border-3 border-danger" : "")">
                             <td class="text-center fw-bold @(sacaPlaza ? "text-success" : "text-muted")">
                                 @pos
                             </td>
@@ -285,6 +314,11 @@ else
     private bool mostrarSelectDni = false;
     private string dniSeleccionado = "";
     private HashSet<string> excluidos = [];
+    private string textoFoco = "";
+    private string? dniEnFoco;
+    private string? mensajeFoco;
+    private bool focoNoEncontrado = false;
+    private string? filaPendienteScroll;
 
     private record ItemRanking(
         string Dni,
@@ -324,6 +358,54 @@ else
 
     private void LimpiarExcluidos() => excluidos.Clear();
 
+    private void LimpiarFoco()
+    {
+        textoFoco = string.Empty;
+        dniEnFoco = null;
+        mensajeFoco = null;
+        focoNoEncontrado = false;
+        filaPendienteScroll = null;
+    }
+
+    private async Task IrAFilaObjetivo()
+    {
+        var termino = textoFoco.Trim();
+        if (string.IsNullOrWhiteSpace(termino))
+        {
+            dniEnFoco = null;
+            mensajeFoco = "Escribe un DNI o un nombre para saltar a una fila.";
+            focoNoEncontrado = true;
+            return;
+        }
+
+        var ranking = RankingOposicion().ToList();
+        var coincidencia = ranking.FirstOrDefault(x =>
+            x.Dni.Contains(termino, StringComparison.OrdinalIgnoreCase) ||
+            x.Nombre.Contains(termino, StringComparison.OrdinalIgnoreCase));
+
+        if (coincidencia is null)
+        {
+            dniEnFoco = null;
+            mensajeFoco = $"No se encontró una fila que coincida con \"{termino}\".";
+            focoNoEncontrado = true;
+            return;
+        }
+
+        dniEnFoco = coincidencia.Dni;
+        mensajeFoco = $"Foco en {coincidencia.Nombre} ({coincidencia.Dni}).";
+        focoNoEncontrado = false;
+        filaPendienteScroll = $"fila-{coincidencia.Dni}";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task BuscarFilaConEnter(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await IrAFilaObjetivo();
+        }
+    }
+
     private void AbrirSelectDniCorte()
     {
         dniSeleccionado = "";
@@ -360,6 +442,7 @@ else
             datos = OsakidetzaService.UltimosResultados;
             return;
         }
+
         var ultimoSnapshot = await HistoricoRepo.GetUltimoSnapshotAsync();
         datos = ultimoSnapshot.Select(h => new CandidatoLista
         {
@@ -377,5 +460,15 @@ else
             Posicrelpl     = h.Posicrelpl
         }).ToList();
         OsakidetzaService.UltimosResultados = datos;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!string.IsNullOrWhiteSpace(filaPendienteScroll))
+        {
+            var target = filaPendienteScroll;
+            filaPendienteScroll = null;
+            await JS.InvokeVoidAsync("irAFilaTabla", target);
+        }
     }
 }

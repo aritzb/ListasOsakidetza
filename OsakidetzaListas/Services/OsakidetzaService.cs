@@ -73,10 +73,24 @@ public class OsakidetzaService(HttpClient http, ILogger<OsakidetzaService> logge
         return [];
     }
 
-    public async Task<List<CandidatoLista>> GetTodasLasListasAsync()
+    public async Task<List<CandidatoLista>> GetTodasLasListasAsync(Func<int, int, string?, Task>? progress = null)
     {
-        var resultados = await Task.WhenAll(Dnis.Select(GetListasCandidatoAsync));
-        UltimosResultados = resultados.SelectMany(x => x).ToList();
+        var resultados = new List<CandidatoLista>();
+        var total = Dnis.Count;
+
+        for (var i = 0; i < Dnis.Count; i++)
+        {
+            var dni = Dnis[i];
+            var items = await GetListasCandidatoAsync(dni);
+            resultados.AddRange(items);
+
+            if (progress != null)
+            {
+                await progress(i + 1, total, dni);
+            }
+        }
+
+        UltimosResultados = resultados;
         return UltimosResultados;
     }
 

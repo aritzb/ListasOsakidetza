@@ -21,6 +21,15 @@
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
         };
+
+        window.irAFilaTabla = function(id) {
+            const fila = document.getElementById(id);
+            if (!fila) return;
+
+            fila.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            fila.classList.add('tabla-foco-flash');
+            window.setTimeout(() => fila.classList.remove('tabla-foco-flash'), 1800);
+        };
     </script>
 </head>
 <body>
