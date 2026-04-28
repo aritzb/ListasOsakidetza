@@ -1,0 +1,372 @@
+﻿@page "/buscar"
+@rendermode @(new InteractiveServerRenderMode())
+@using OsakidetzaListas.Models
+@using OsakidetzaListas.Services
+@using OsakidetzaListas.Repositories
+@inject OsakidetzaService OsakidetzaService
+@inject IHistoricoRepository HistoricoRepo
+
+<PageTitle>Buscar persona — Osakidetza</PageTitle>
+
+<h2 class="mb-1">🔍 Buscar persona</h2>
+<p class="text-muted mb-3">Busca por nombre o DNI para ver en qué listas y centros aparece.</p>
+
+<div class="input-group mb-4" style="max-width:500px">
+    <input class="form-control form-control-lg"
+           placeholder="Nombre, apellido o DNI..."
+           @bind="textoBusqueda"
+           @bind:event="oninput" />
+    @if (!string.IsNullOrEmpty(textoBusqueda))
+    {
+        <button class="btn btn-outline-secondary" @onclick="LimpiarBusqueda">✖</button>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(textoBusqueda) && textoBusqueda.Length >= 2)
+{
+    var personas = PersonasEncontradas();
+
+    if (!personas.Any())
+    {
+        <div class="alert alert-warning">No se encontró ninguna persona con "@textoBusqueda".</div>
+    }
+    else
+    {
+        <p class="text-muted small mb-3">@personas.Count persona(s) encontrada(s).</p>
+
+        foreach (var (dni, registros) in personas)
+        {
+            var primera = registros.First();
+            var totalCategorias = registros.Select(x => x.Zdesca).Distinct().Count();
+            var totalCentros    = registros.Select(x => x.Zdespl).Distinct().Count();
+
+            <div class="card mb-4">
+                <div class="card-header d-flex align-items-center gap-3 flex-wrap">
+                    <div>
+                        <h5 class="mb-0">@primera.NombreCompleto</h5>
+                        <code class="text-muted">@dni</code>
+                    </div>
+                    <div class="ms-auto d-flex gap-2 flex-wrap">
+                        <span class="badge bg-info text-dark">@totalCategorias categoría(s)</span>
+                        <span class="badge bg-secondary">@totalCentros centro(s)</span>
+                        <span class="badge bg-success">@registros.Count(x => x.Ztconc == "I") interinidades</span>
+                        <span class="badge bg-warning text-dark">@registros.Count(x => x.Ztconc == "S") listas cortas</span>
+                        <button class="btn btn-sm btn-outline-info"
+                                @onclick="@(() => AbrirHistorico(dni))">
+                            📊 Histórico
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card-body p-0">
+                    @foreach (var catGroup in registros.GroupBy(x => x.Zdesca).OrderBy(g => g.Key))
+                    {
+                        <div class="px-3 pt-3 pb-1">
+                            <h6 class="text-secondary border-bottom pb-1">
+                                🏷️ @catGroup.Key
+                                — Puntuación: <strong>@catGroup.First().PuntuacionTotal.ToString("F2")</strong>
+                                <small class="text-muted fw-normal">
+                                    (Oposi: @catGroup.First().Zcalexa.ToString("F2") +
+                                     Exp: @catGroup.First().Zcalexp.ToString("F2") +
+                                     Eus: @catGroup.First().Zptoeus.ToString("F2"))
+                                </small>
+                            </h6>
+                        </div>
+
+                        @foreach (var tipoGroup in catGroup.GroupBy(x => x.Ztconc).OrderBy(g => g.Key))
+                        {
+                            var esInterinidad = tipoGroup.Key == "I";
+                            <div class="px-3 pb-2">
+                                <p class="mb-1 small fw-bold @(esInterinidad ? "text-success" : "text-warning")">
+                                    @(esInterinidad ? "🟢 Interinidades" : "🟡 Listas Cortas")
+                                    <span class="text-muted fw-normal">(@tipoGroup.Count() centros)</span>
+                                </p>
+                                <table class="table table-sm table-hover mb-2">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Centro</th>
+                                            <th>Estado</th>
+                                            <th class="text-center">Pos.Abs</th>
+                                            <th class="text-center">Pos.Rel</th>
+                                            <th class="text-center">Pos.RelPL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var item in tipoGroup.OrderBy(x => x.Posicabs))
+                                        {
+                                            <tr class="@(item.EstaOcupado ? "table-secondary text-muted" : "")">
+                                                <td>@item.Zdespl</td>
+                                                <td>@item.EstadoTexto</td>
+                                                <td class="text-center">@item.Posicabs</td>
+                                                <td class="text-center">@(item.Posicrel == 0 ? "—" : item.Posicrel.ToString())</td>
+                                                <td class="text-center">@(item.Posicrelpl == 0 ? "—" : item.Posicrelpl.ToString())</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        }
+    }
+}
+else if (!string.IsNullOrEmpty(textoBusqueda))
+{
+    <p class="text-muted small">Escribe al menos 2 caracteres...</p>
+}
+
+<!-- Modal Histórico -->
+@if (mostrarHistorico)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">📊 Histórico — <code>@dniHistorico</code></h5>
+                    <button class="btn-close" @onclick="CerrarHistorico"></button>
+                </div>
+                <div class="modal-body">
+                    @if (cargandoHistorico)
+                    {
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="spinner-border spinner-border-sm"></div>
+                            <span>Cargando...</span>
+                        </div>
+                    }
+                    else if (!historicoActual.Any())
+                    {
+                        <p class="text-muted">Sin cambios registrados todavía.</p>
+                    }
+                    else
+                    {
+                        <!-- Pestañas -->
+                        <ul class="nav nav-tabs mb-3">
+                            <li class="nav-item">
+                                <button class="nav-link @(pestañaActiva == "tabla" ? "active" : "")"
+                                        @onclick='() => pestañaActiva = "tabla"'>
+                                    📋 Tabla de cambios
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link @(pestañaActiva == "calendario" ? "active" : "")"
+                                        @onclick='() => pestañaActiva = "calendario"'>
+                                    📅 Línea de tiempo
+                                </button>
+                            </li>
+                        </ul>
+
+                        @if (pestañaActiva == "tabla")
+                        {
+                            <p class="small text-muted">@historicoActual.Count cambios registrados — 🔔 indica cambio</p>
+                            <table class="table table-sm table-striped">
+                                <thead class="table-secondary">
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Categoría</th>
+                                        <th>Centro</th>
+                                        <th>Tipo</th>
+                                        <th>Estado</th>
+                                        <th class="text-end">Total</th>
+                                        <th class="text-center">Pos.Abs</th>
+                                        <th class="text-center">Pos.Rel</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @for (int i = 0; i < historicoActual.Count; i++)
+                                    {
+                                        var h = historicoActual[i];
+                                        var prev = i < historicoActual.Count - 1 ? historicoActual[i + 1] : null;
+                                        var cambio = prev != null && (
+                                            h.Posicabs    != prev.Posicabs   ||
+                                            h.Posicrel    != prev.Posicrel   ||
+                                            h.EstaOcupado != prev.EstaOcupado);
+                                        <tr class="@(cambio ? "table-warning" : "")">
+                                            <td class="small">@h.FechaConsulta.ToLocalTime().ToString("dd/MM/yy HH:mm")</td>
+                                            <td class="small">@h.Zdesca</td>
+                                            <td class="small">@h.Zdespl</td>
+                                            <td><span class="badge @h.TipoListaBadge">@h.Ztconc</span></td>
+                                            <td>@h.EstadoTexto</td>
+                                            <td class="text-end fw-bold">@h.PuntuacionTotal.ToString("F2")</td>
+                                            <td class="text-center">@h.Posicabs</td>
+                                            <td class="text-center">@(h.Posicrel == 0 ? "—" : h.Posicrel.ToString())</td>
+                                            <td>@(cambio ? "🔔" : "")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                        else
+                        {
+                            <!-- Línea de tiempo por centro+categoría -->
+                            var tramos = GenerarTramos();
+                            @if (!tramos.Any())
+                            {
+                                <p class="text-muted">No hay suficientes datos para generar la línea de tiempo.</p>
+                            }
+                            else
+                            {
+                                var fechaMin = tramos.Min(t => t.Inicio);
+                                var fechaMax = tramos.Max(t => t.Fin);
+                                var totalDias = (fechaMax - fechaMin).TotalDays;
+                                if (totalDias < 1) { totalDias = 1; }
+
+                                <p class="small text-muted mb-3">
+                                    Período: @fechaMin.ToLocalTime().ToString("dd/MM/yyyy") →
+                                    @fechaMax.ToLocalTime().ToString("dd/MM/yyyy")
+                                    (@((int)totalDias) días con datos)
+                                </p>
+
+                                var grupos = tramos.GroupBy(t => $"{t.Zdesca} — {t.Zdespl} ({t.Ztconc})").ToList();
+
+                                foreach (var grupo in grupos)
+                                {
+                                    <div class="mb-4">
+                                        <div class="small fw-bold text-secondary mb-1">@grupo.Key</div>
+                                        <div class="position-relative" style="height:36px; background:#f0f0f0; border-radius:6px; overflow:hidden;">
+                                            @foreach (var tramo in grupo)
+                                            {
+                                                var left   = (tramo.Inicio - fechaMin).TotalDays / totalDias * 100;
+                                                var width  = (tramo.Fin - tramo.Inicio).TotalDays / totalDias * 100;
+                                                if (width < 0.3) { width = 0.3; }
+                                                var color  = tramo.Ocupado ? "#dc3545" : "#198754";
+                                                var titulo = $"{(tramo.Ocupado ? "Ocupado" : "Disponible")}: {tramo.Inicio.ToLocalTime():dd/MM/yy HH:mm} → {tramo.Fin.ToLocalTime():dd/MM/yy HH:mm}";
+                                                <div title="@titulo"
+                                                     style="position:absolute;
+                                                            left:@left.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)%;
+                                                            width:@width.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)%;
+                                                            height:100%;
+                                                            background:@color;
+                                                            opacity:0.85;
+                                                            cursor:help;">
+                                                </div>
+                                            }
+                                        </div>
+                                        <!-- Etiquetas de fecha inicio/fin -->
+                                        <div class="d-flex justify-content-between">
+                                            <small class="text-muted">@fechaMin.ToLocalTime().ToString("dd/MM/yy")</small>
+                                            <small class="text-muted">@fechaMax.ToLocalTime().ToString("dd/MM/yy")</small>
+                                        </div>
+                                    </div>
+                                }
+
+                                <!-- Leyenda -->
+                                <div class="d-flex gap-3 mt-2">
+                                    <span><span style="display:inline-block;width:16px;height:16px;background:#198754;border-radius:3px;vertical-align:middle;"></span> Disponible</span>
+                                    <span><span style="display:inline-block;width:16px;height:16px;background:#dc3545;border-radius:3px;vertical-align:middle;"></span> Ocupado</span>
+                                </div>
+                            }
+                        }
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CerrarHistorico">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string textoBusqueda = "";
+    private List<CandidatoLista> datos = [];
+    private bool mostrarHistorico = false;
+    private bool cargandoHistorico = false;
+    private string? dniHistorico;
+    private List<HistoricoLista> historicoActual = [];
+    private string pestañaActiva = "tabla";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (OsakidetzaService.UltimosResultados.Any())
+        {
+            datos = OsakidetzaService.UltimosResultados;
+            return;
+        }
+        var ultimoSnapshot = await HistoricoRepo.GetUltimoSnapshotAsync();
+        datos = ultimoSnapshot.Select(h => new CandidatoLista
+        {
+            Dni            = h.Dni,
+            NombreCompleto = h.NombreCompleto,
+            Zdesca         = h.Zdesca,
+            Zdespl         = h.Zdespl,
+            Ztconc         = h.Ztconc,
+            Zcalexa        = h.Zcalexa,
+            Zcalexp        = h.Zcalexp,
+            Zptoeus        = h.Zptoeus,
+            Zptoaca        = h.Zptoaca,
+            Posicabs       = h.Posicabs,
+            Posicrel       = h.Posicrel,
+            Posicrelpl     = h.Posicrelpl
+        }).ToList();
+        OsakidetzaService.UltimosResultados = datos;
+    }
+
+    private void LimpiarBusqueda() => textoBusqueda = string.Empty;
+
+    private List<(string Dni, List<CandidatoLista> Registros)> PersonasEncontradas()
+    {
+        var termino = textoBusqueda.Trim();
+        return datos
+            .Where(x =>
+                x.NombreCompleto.Contains(termino, StringComparison.OrdinalIgnoreCase) ||
+                x.Dni.Contains(termino, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(x => x.Dni)
+            .Select(g => (g.Key, g.ToList()))
+            .OrderBy(x => x.Item2.First().NombreCompleto)
+            .ToList();
+    }
+
+    private async Task AbrirHistorico(string dni)
+    {
+        dniHistorico      = dni;
+        mostrarHistorico  = true;
+        cargandoHistorico = true;
+        pestañaActiva     = "tabla";
+        historicoActual   = await HistoricoRepo.GetHistoricoPorDniAsync(dni);
+        cargandoHistorico = false;
+    }
+
+    private void CerrarHistorico()
+        => (mostrarHistorico, dniHistorico, historicoActual) = (false, null, []);
+
+    // Genera tramos de tiempo por centro+categoría+tipo
+    private record Tramo(DateTime Inicio, DateTime Fin, bool Ocupado, string Zdesca, string Zdespl, string Ztconc);
+
+    private List<Tramo> GenerarTramos()
+    {
+        var tramos = new List<Tramo>();
+        var ahora  = DateTime.UtcNow;
+
+        // Agrupar por centro+categoría+tipo
+        var grupos = historicoActual
+            .GroupBy(h => new { h.Zdesca, h.Zdespl, h.Ztconc });
+
+        foreach (var grupo in grupos)
+        {
+            // Ordenar por fecha ascendente
+            var registros = grupo.OrderBy(h => h.FechaConsulta).ToList();
+
+            for (int i = 0; i < registros.Count; i++)
+            {
+                var actual = registros[i];
+                var fin    = i < registros.Count - 1
+                    ? registros[i + 1].FechaConsulta
+                    : ahora;
+
+                tramos.Add(new Tramo(
+                    actual.FechaConsulta,
+                    fin,
+                    actual.EstaOcupado,
+                    grupo.Key.Zdesca,
+                    grupo.Key.Zdespl,
+                    grupo.Key.Ztconc
+                ));
+            }
+        }
+
+        return tramos.OrderBy(t => t.Zdesca).ThenBy(t => t.Zdespl).ToList();
+    }
+}

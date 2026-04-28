@@ -1,0 +1,381 @@
+﻿@page "/oposicion"
+@rendermode @(new InteractiveServerRenderMode())
+@using OsakidetzaListas.Models
+@using OsakidetzaListas.Services
+@using OsakidetzaListas.Repositories
+@inject OsakidetzaService OsakidetzaService
+@inject IHistoricoRepository HistoricoRepo
+@inject ExportService ExportService
+@inject IJSRuntime JS
+
+<PageTitle>Simulador Oposición — Osakidetza</PageTitle>
+
+<h2 class="mb-1">🏆 Simulador de Oposición</h2>
+<p class="text-muted mb-3">
+    Ranking por puntuación acumulada (Experiencia + Euskera). Simula cuántas plazas se convocan
+    y ve quién sacaría plaza.
+</p>
+
+<!-- Controles -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex gap-3 flex-wrap align-items-end">
+
+            <div style="min-width:260px">
+                <label class="form-label small fw-bold mb-1">Categoría</label>
+                <select class="form-select" @bind="categoriaSeleccionada">
+                    <option value="">— Selecciona categoría —</option>
+                    @foreach (var cat in categorias)
+                    {
+                        <option value="@cat">@cat</option>
+                    }
+                </select>
+            </div>
+
+            @if (!string.IsNullOrEmpty(categoriaSeleccionada))
+            {
+                <div style="width:180px">
+                    <label class="form-label small fw-bold mb-1">
+                        Nº de plazas
+                        <span class="text-muted fw-normal">(0 = sin corte)</span>
+                    </label>
+                    <input type="number" class="form-control" min="0"
+                           @bind="numPlazas" @bind:event="oninput" />
+                </div>
+
+                <div style="width:200px">
+                    <label class="form-label small fw-bold mb-1">Buscar persona</label>
+                    <input class="form-control" placeholder="Nombre o DNI..."
+                           @bind="textoBusqueda" @bind:event="oninput" />
+                </div>
+
+                <div>
+                    <label class="form-label small fw-bold mb-1">Puntuación</label>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn @(modoCalculo == "expEus" ? "btn-primary" : "btn-outline-primary")"
+                                @onclick='() => modoCalculo = "expEus"'>
+                            Exp + Eus
+                        </button>
+                        <button class="btn @(modoCalculo == "total" ? "btn-primary" : "btn-outline-primary")"
+                                @onclick='() => modoCalculo = "total"'>
+                            Total completo
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="form-label small fw-bold mb-1">Exportar</label>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-success" @onclick="() => ExportarExcel(null)">
+                            📥 Todo
+                        </button>
+                        <button class="btn btn-outline-warning" @onclick="AbrirSelectDniCorte">
+                            📥 Desde DNI
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="form-label small fw-bold mb-1">Excluidos</label>
+                    <button class="btn btn-sm btn-outline-danger" @onclick="LimpiarExcluidos"
+                            disabled="@(!excluidos.Any())">
+                        🔄 Restaurar todos (@excluidos.Count)
+                    </button>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(categoriaSeleccionada))
+{
+    var ranking = RankingOposicion().ToList();
+    var plazaCorte = numPlazas > 0 && numPlazas <= ranking.Count
+        ? ranking[numPlazas - 1].Puntuacion
+        : (decimal?)null;
+
+    <!-- Resumen -->
+    <div class="row mb-3 g-2">
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-primary h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-primary">@ranking.Count</h4>
+                    <small class="text-muted">Personas en lista</small>
+                </div>
+            </div>
+        </div>
+        @if (numPlazas > 0)
+        {
+            <div class="col-6 col-md-3">
+                <div class="card text-center border-success h-100">
+                    <div class="card-body py-2">
+                        <h4 class="mb-0 text-success">@Math.Min(numPlazas, ranking.Count)</h4>
+                        <small class="text-muted">Plazas convocadas</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card text-center border-danger h-100">
+                    <div class="card-body py-2">
+                        <h4 class="mb-0 text-danger">@Math.Max(0, ranking.Count - numPlazas)</h4>
+                        <small class="text-muted">Sin plaza</small>
+                    </div>
+                </div>
+            </div>
+            @if (plazaCorte.HasValue)
+            {
+                <div class="col-6 col-md-3">
+                    <div class="card text-center border-warning h-100">
+                        <div class="card-body py-2">
+                            <h4 class="mb-0 text-warning">@plazaCorte.Value.ToString("F2")</h4>
+                            <small class="text-muted">Nota de corte</small>
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+
+    <!-- Tabla ranking -->
+    <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+            <span class="badge bg-secondary">@categoriaSeleccionada</span>
+            @if (excluidos.Any())
+            {
+                <span class="badge bg-danger">@excluidos.Count excluidos</span>
+            }
+            <span class="text-muted small ms-auto">
+                Ordenado por: <strong>@(modoCalculo == "expEus" ? "Experiencia + Euskera" : "Puntuación total")</strong>
+            </span>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th class="text-center" style="width:50px">#</th>
+                        <th>Nombre</th>
+                        <th>DNI</th>
+                        <th class="text-end">Experiencia</th>
+                        <th class="text-end">Euskera</th>
+                        @if (modoCalculo == "total")
+                        {
+                            <th class="text-end">Oposición</th>
+                        }
+                        <th class="text-end">
+                            @(modoCalculo == "expEus" ? "Exp+Eus ⭐" : "Total ⭐")
+                        </th>
+                        @if (numPlazas > 0)
+                        {
+                            <th class="text-center">Plaza</th>
+                        }
+                        <th class="text-center" style="width:60px">Excluir</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ int pos = 1; }
+                    @foreach (var item in ranking)
+                    {
+                        var sacaPlaza = numPlazas > 0 && pos <= numPlazas;
+                        var esBorde   = numPlazas > 0 && pos == numPlazas;
+                        var rowClass  = sacaPlaza ? "table-success" : "";
+
+                        <tr class="@rowClass @(esBorde ? "border-bottom border-3 border-danger" : "")">
+                            <td class="text-center fw-bold @(sacaPlaza ? "text-success" : "text-muted")">
+                                @pos
+                            </td>
+                            <td class="fw-bold">@item.Nombre</td>
+                            <td><code class="small">@item.Dni</code></td>
+                            <td class="text-end">@item.Zcalexp.ToString("F2")</td>
+                            <td class="text-end">@item.Zptoeus.ToString("F2")</td>
+                            @if (modoCalculo == "total")
+                            {
+                                <td class="text-end">@item.Zcalexa.ToString("F2")</td>
+                            }
+                            <td class="text-end fw-bold">@item.Puntuacion.ToString("F2")</td>
+                            @if (numPlazas > 0)
+                            {
+                                <td class="text-center">
+                                    @if (sacaPlaza)
+                                    {
+                                        <span class="badge bg-success">✅ Plaza</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary">❌</span>
+                                    }
+                                </td>
+                            }
+                            <td class="text-center">
+                                <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                                        title="Quitar de la lista"
+                                        @onclick="() => excluidos.Add(item.Dni)">
+                                    ✖
+                                </button>
+                            </td>
+                        </tr>
+                        pos++;
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else
+{
+    <div class="alert alert-info">👆 Selecciona una categoría para ver el simulador.</div>
+}
+
+<!-- Modal seleccionar DNI de corte -->
+@if (mostrarSelectDni)
+{
+    var rankingModal = RankingOposicion().ToList();
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">📥 Exportar desde DNI</h5>
+                    <button class="btn-close" @onclick="CerrarSelectDni"></button>
+                </div>
+                <div class="modal-body">
+                    <label class="form-label fw-bold">DNI desde el que exportar:</label>
+                    <p class="small text-muted">
+                        Se exportarán desde el #1 hasta esa persona inclusive.
+                    </p>
+                    <input class="form-control form-control-lg"
+                           placeholder="Ej: 12345678A"
+                           @bind="dniSeleccionado"
+                           @bind:event="oninput" />
+                    @if (!string.IsNullOrEmpty(dniSeleccionado))
+                    {
+                        var idx = rankingModal.FindIndex(x => x.Dni.Equals(dniSeleccionado.Trim(), StringComparison.OrdinalIgnoreCase));
+                        @if (idx >= 0)
+                        {
+                            <div class="alert alert-success mt-2 py-2 small">
+                                ✅ <strong>@rankingModal[idx].Nombre</strong> — Posición #@(idx + 1) de @rankingModal.Count
+                                — exporta desde el #1 hasta ella: <strong>@(idx + 1)</strong> personas
+                                (posiciones #1 → #@(idx + 1))
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="alert alert-warning mt-2 py-2 small">
+                                ⚠️ DNI no encontrado en el ranking actual
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CerrarSelectDni">Cancelar</button>
+                    <button class="btn btn-warning" @onclick="ExportarDesdeSelected"
+                            disabled="@(string.IsNullOrEmpty(dniSeleccionado))">
+                        📥 Exportar desde aquí
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<CandidatoLista> datos = [];
+    private string categoriaSeleccionada = "";
+    private int numPlazas = 0;
+    private string textoBusqueda = "";
+    private string modoCalculo = "expEus";
+    private bool mostrarSelectDni = false;
+    private string dniSeleccionado = "";
+    private HashSet<string> excluidos = [];
+
+    private record ItemRanking(
+        string Dni,
+        string Nombre,
+        decimal Zcalexa,
+        decimal Zcalexp,
+        decimal Zptoeus,
+        decimal Puntuacion
+    );
+
+    private List<string> categorias => datos
+        .Select(x => x.Zdesca)
+        .Distinct()
+        .OrderBy(x => x)
+        .ToList();
+
+    private IEnumerable<ItemRanking> RankingOposicion()
+    {
+        return datos
+            .Where(x => x.Zdesca == categoriaSeleccionada &&
+                        !excluidos.Contains(x.Dni) &&
+                        (string.IsNullOrEmpty(textoBusqueda) ||
+                         x.NombreCompleto.Contains(textoBusqueda, StringComparison.OrdinalIgnoreCase) ||
+                         x.Dni.Contains(textoBusqueda, StringComparison.OrdinalIgnoreCase)))
+            .GroupBy(x => x.Dni)
+            .Select(g =>
+            {
+                var r = g.First();
+                var puntuacion = modoCalculo == "expEus"
+                    ? r.Zcalexp + r.Zptoeus
+                    : r.PuntuacionTotal;
+                return new ItemRanking(r.Dni, r.NombreCompleto, r.Zcalexa, r.Zcalexp, r.Zptoeus, puntuacion);
+            })
+            .OrderByDescending(x => x.Puntuacion)
+            .ThenBy(x => x.Nombre);
+    }
+
+    private void LimpiarExcluidos() => excluidos.Clear();
+
+    private void AbrirSelectDniCorte()
+    {
+        dniSeleccionado = "";
+        mostrarSelectDni = true;
+    }
+
+    private void CerrarSelectDni() => mostrarSelectDni = false;
+
+    private async Task ExportarExcel(string? dniCorte)
+    {
+        var ranking = RankingOposicion().ToList();
+        var datosExcel = ranking
+            .Select(x => (x.Dni, x.Nombre, x.Zcalexa, x.Zcalexp, x.Zptoeus, x.Puntuacion))
+            .ToList();
+
+        var bytes = ExportService.ExportarRankingExcel(datosExcel, categoriaSeleccionada, dniCorte);
+        var nombreArchivo = $"oposicion_{categoriaSeleccionada.Replace(" ", "_")}_{DateTime.Now:yyyy-MM-dd_HHmm}.xlsx";
+        await JS.InvokeVoidAsync("descargarArchivo", bytes, nombreArchivo);
+    }
+
+    private async Task ExportarDesdeSelected()
+    {
+        if (!string.IsNullOrEmpty(dniSeleccionado))
+        {
+            await ExportarExcel(dniSeleccionado.Trim());
+            CerrarSelectDni();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (OsakidetzaService.UltimosResultados.Any())
+        {
+            datos = OsakidetzaService.UltimosResultados;
+            return;
+        }
+        var ultimoSnapshot = await HistoricoRepo.GetUltimoSnapshotAsync();
+        datos = ultimoSnapshot.Select(h => new CandidatoLista
+        {
+            Dni            = h.Dni,
+            NombreCompleto = h.NombreCompleto,
+            Zdesca         = h.Zdesca,
+            Zdespl         = h.Zdespl,
+            Ztconc         = h.Ztconc,
+            Zcalexa        = h.Zcalexa,
+            Zcalexp        = h.Zcalexp,
+            Zptoeus        = h.Zptoeus,
+            Zptoaca        = h.Zptoaca,
+            Posicabs       = h.Posicabs,
+            Posicrel       = h.Posicrel,
+            Posicrelpl     = h.Posicrelpl
+        }).ToList();
+        OsakidetzaService.UltimosResultados = datos;
+    }
+}

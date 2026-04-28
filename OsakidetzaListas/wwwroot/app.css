@@ -1,0 +1,124 @@
+﻿html, body {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    background-color: #f8f9fa;
+}
+
+/* ── Cards / tabla ───────────────────── */
+.table th {
+    white-space: nowrap;
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.card-stat {
+    transition: transform 0.1s;
+}
+
+    .card-stat:hover {
+        transform: scale(1.02);
+    }
+
+/* ── Layout página ───────────────────── */
+.page {
+    display: flex;
+    flex-direction: row;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 220px;
+    min-width: 220px;
+    background: linear-gradient(180deg, #052767 0%, #3a0647 100%);
+    min-height: 100vh;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+}
+
+main {
+    flex: 1;
+    overflow-x: auto;
+}
+
+article {
+    padding: 1.5rem 2rem;
+}
+
+/* ── NavMenu ─────────────────────────── */
+.navbar-brand {
+    color: white !important;
+    font-weight: 700;
+    font-size: 1rem;
+    text-decoration: none !important;
+}
+
+.navbar-toggler {
+    display: none;
+}
+
+.nav-scrollable {
+    padding-top: 0.5rem;
+}
+
+.nav-item {
+    padding: 0.25rem 0;
+}
+
+.nav-link {
+    color: rgba(255, 255, 255, 0.75) !important;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-radius: 6px;
+    margin: 0 0.5rem;
+    text-decoration: none !important;
+    font-size: 0.95rem;
+    transition: background 0.15s, color 0.15s;
+}
+
+    .nav-link:hover {
+        background-color: rgba(255, 255, 255, 0.15);
+        color: white !important;
+    }
+
+    .nav-link.active {
+        background-color: rgba(255, 255, 255, 0.25);
+        color: white !important;
+        font-weight: 600;
+    }
+
+/* ── Móvil ───────────────────────────── */
+@media (max-width: 640px) {
+    .page {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        min-width: unset;
+        height: auto;
+        min-height: unset;
+        position: relative;
+    }
+
+    .navbar-toggler {
+        display: block;
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.3);
+    }
+
+    .nav-scrollable.collapse {
+        display: none;
+    }
+
+
+}

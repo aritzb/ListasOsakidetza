@@ -1,0 +1,467 @@
+﻿@page "/"
+@rendermode @(new InteractiveServerRenderMode())
+@using OsakidetzaListas.Models
+@using OsakidetzaListas.Services
+@using OsakidetzaListas.Repositories
+@using OsakidetzaListas.Extensions
+@inject OsakidetzaService OsakidetzaService
+@inject IHistoricoRepository HistoricoRepo
+
+<PageTitle>Listas Contratación Osakidetza</PageTitle>
+
+<h1 class="mb-1">📋 Listas de Contratación Osakidetza</h1>
+<p class="text-muted mb-3">Última actualización: @(ultimaActualizacion?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</p>
+
+@if (cargando)
+{
+    <div class="d-flex align-items-center gap-2 my-4">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span>Consultando la API de Osakidetza...</span>
+    </div>
+}
+else if (error != null)
+{
+    <div class="alert alert-danger">⚠️ @error</div>
+}
+
+<!-- Panel de DNIs -->
+<div class="card mb-3">
+    <div class="card-header fw-bold">👥 DNIs cargados desde <code>dnisfiltrados.json</code></div>
+    <div class="card-body">
+        <div class="d-flex gap-3 align-items-center flex-wrap">
+            <span class="badge bg-primary fs-6">@OsakidetzaService.Dnis.Count DNIs cargados</span>
+            <code class="small text-muted">
+                @string.Join(", ", OsakidetzaService.Dnis.Take(5))
+                @(OsakidetzaService.Dnis.Count > 5 ? $" ... y {OsakidetzaService.Dnis.Count - 5} más" : "")
+            </code>
+            <div class="ms-auto d-flex gap-2">
+                <button class="btn btn-outline-secondary" @onclick="RecargarJson">♻️ Recargar JSON</button>
+                <button class="btn btn-primary" @onclick="Recargar" disabled="@cargando">🔄 Consultar API</button>
+            </div>
+        </div>
+        @if (errorDnis != null)
+        {
+            <div class="text-danger small mt-2">@errorDnis</div>
+        }
+    </div>
+</div>
+
+@if (!cargando && todasLasListas.Any())
+{
+    <!-- Estadísticas globales -->
+    <div class="row mb-3 g-2">
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-primary h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-primary">@todasLasListas.Select(x => x.Dni).Distinct().Count()</h4>
+                    <small class="text-muted">Personas</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-info h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-info">@categorias.Count</h4>
+                    <small class="text-muted">Categorías</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-success h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-success">@centrosInterinidad.Count</h4>
+                    <small class="text-muted">Centros interinidad</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-warning h-100">
+                <div class="card-body py-2">
+                    <h4 class="mb-0 text-warning">@centrosListaCorta.Count</h4>
+                    <small class="text-muted">Centros lista corta</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Selector paso a paso: Categoría → Tipo → Centro -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex gap-3 flex-wrap align-items-end">
+
+                <!-- 1. Categoría -->
+                <div style="min-width:260px">
+                    <label class="form-label small fw-bold mb-1">
+                        1️⃣ Categoría
+                        <span class="text-muted fw-normal">(@categorias.Count disponibles)</span>
+                    </label>
+                    <select class="form-select" @bind="categoriaSeleccionada" @bind:after="OnCategoriaChanged">
+                        <option value="">— Selecciona categoría —</option>
+                        @foreach (var cat in categorias)
+                        {
+                            <option value="@cat">@cat</option>
+                        }
+                    </select>
+                </div>
+
+                <!-- 2. Tipo (solo si hay categoría) -->
+                @if (!string.IsNullOrEmpty(categoriaSeleccionada))
+                {
+                    <div>
+                        <label class="form-label small fw-bold mb-1">2️⃣ Tipo de lista</label>
+                        <div class="btn-group">
+                            <button class="btn @(tipoSeleccionado == "I" ? "btn-success" : "btn-outline-success")"
+                                    @onclick='() => SeleccionarTipo("I")'>
+                                🟢 Interinidades
+                            </button>
+                            <button class="btn @(tipoSeleccionado == "S" ? "btn-warning" : "btn-outline-warning")"
+                                    @onclick='() => SeleccionarTipo("S")'>
+                                🟡 Listas Cortas
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 3. Centro (solo si hay tipo) -->
+                    <div style="min-width:320px">
+                        <label class="form-label small fw-bold mb-1">
+                            3️⃣ Centro
+                            <span class="text-muted fw-normal">(@centrosDelTipo.Count disponibles)</span>
+                        </label>
+                        <select class="form-select" @bind="centroSeleccionado">
+                            <option value="">— Selecciona un centro —</option>
+                            @foreach (var c in centrosDelTipo)
+                            {
+                                <option value="@c">@c</option>
+                            }
+                        </select>
+                    </div>
+                }
+
+                <!-- Filtros adicionales (solo si hay centro) -->
+                @if (!string.IsNullOrEmpty(centroSeleccionado))
+                {
+                    <div>
+                        <label class="form-label small fw-bold mb-1">Buscar</label>
+                        <input class="form-control" style="width:200px"
+                               placeholder="Nombre / DNI..."
+                               @bind="textoBusqueda" @bind:event="oninput" />
+                    </div>
+                    <div>
+                        <label class="form-label small fw-bold mb-1">Estado</label>
+                        <select class="form-select" style="width:160px" @bind="filtroEstado">
+                            <option value="">Todos</option>
+                            <option value="disponible">🟢 Disponible</option>
+                            <option value="ocupado">🔴 Ocupado</option>
+                        </select>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Ranking -->
+    @if (!string.IsNullOrEmpty(centroSeleccionado))
+    {
+        var ranking = RankingActual().ToList();
+
+        <div class="card">
+            <div class="card-header d-flex align-items-center gap-2 flex-wrap">
+                <span class="badge bg-secondary">@categoriaSeleccionada</span>
+                <span class="badge @(tipoSeleccionado == "I" ? "bg-success" : "bg-warning text-dark") fs-6">
+                    @(tipoSeleccionado == "I" ? "Interinidad" : "Lista Corta")
+                </span>
+                <strong>@centroSeleccionado</strong>
+                <div class="ms-auto d-flex gap-3">
+                    <span class="text-success small">🟢 @ranking.Count(x => !x.EstaOcupado) disponibles</span>
+                    <span class="text-danger small">🔴 @ranking.Count(x => x.EstaOcupado) ocupados</span>
+                    <span class="text-muted small">Total: @ranking.Count</span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-striped table-hover table-sm align-middle mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th class="text-center" style="width:50px">#</th>
+                            <th>Nombre</th>
+                            <th>DNI</th>
+                            <th>Estado</th>
+                            <th class="text-end">Oposición</th>
+                            <th class="text-end">Experiencia</th>
+                            <th class="text-end">Euskera</th>
+                            <th class="text-end"><strong>Total ⭐</strong></th>
+                            <th class="text-center">Pos.Abs</th>
+                            <th class="text-center">Pos.Rel</th>
+                            <th class="text-center">Pos.RelPL</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!ranking.Any())
+                        {
+                            <tr>
+                                <td colspan="12" class="text-center text-muted py-4">Sin resultados.</td>
+                            </tr>
+                        }
+                        @{ int pos = 1; }
+                        @foreach (var item in ranking)
+                        {
+                            <tr class="@(item.EstaOcupado ? "table-secondary text-muted" : "")">
+                                <td class="text-center fw-bold @(item.EstaOcupado ? "" : "text-primary")">@pos</td>
+                                <td>@item.NombreCompleto</td>
+                                <td><code class="small">@item.Dni</code></td>
+                                <td>@item.EstadoTexto</td>
+                                <td class="text-end">@item.Zcalexa.ToString("F2")</td>
+                                <td class="text-end">@item.Zcalexp.ToString("F2")</td>
+                                <td class="text-end">@item.Zptoeus.ToString("F2")</td>
+                                <td class="text-end fw-bold">@item.PuntuacionTotal.ToString("F2")</td>
+                                <td class="text-center">@item.Posicabs</td>
+                                <td class="text-center">@(item.Posicrel == 0 ? "—" : item.Posicrel.ToString())</td>
+                                <td class="text-center">@(item.Posicrelpl == 0 ? "—" : item.Posicrelpl.ToString())</td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-info py-0 px-1"
+                                            @onclick="() => AbrirHistorico(item.Dni)"
+                                            title="Ver histórico de @item.NombreCompleto">
+                                        📊
+                                    </button>
+                                </td>
+                            </tr>
+                            pos++;
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-info">
+            @if (string.IsNullOrEmpty(categoriaSeleccionada))
+            {
+                <span>👆 Empieza seleccionando una <strong>categoría</strong>.</span>
+            }
+            else
+            {
+                <span>👆 Selecciona un <strong>tipo de lista</strong> y un <strong>centro</strong> para ver el ranking.</span>
+            }
+        </div>
+    }
+}
+
+<!-- Modal Histórico -->
+@if (mostrarHistorico)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">📊 Histórico — <code>@dniHistorico</code></h5>
+                    <button class="btn-close" @onclick="CerrarHistorico"></button>
+                </div>
+                <div class="modal-body">
+                    @if (cargandoHistorico)
+                    {
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="spinner-border spinner-border-sm"></div>
+                            <span>Cargando...</span>
+                        </div>
+                    }
+                    else if (!historicoActual.Any())
+                    {
+                        <p class="text-muted">Sin cambios registrados todavía para este DNI.</p>
+                    }
+                    else
+                    {
+                        <p class="small text-muted">
+                            @historicoActual.Count cambios registrados —
+                            🔔 indica cambio respecto al registro anterior
+                        </p>
+                        <table class="table table-sm table-striped">
+                            <thead class="table-secondary">
+                                <tr>
+                                    <th>Fecha</th>
+                                    <th>Categoría</th>
+                                    <th>Centro</th>
+                                    <th>Tipo</th>
+                                    <th>Estado</th>
+                                    <th class="text-end">Total</th>
+                                    <th class="text-center">Pos.Abs</th>
+                                    <th class="text-center">Pos.Rel</th>
+                                    <th class="text-center">Pos.RelPL</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @for (int i = 0; i < historicoActual.Count; i++)
+                                {
+                                    var h = historicoActual[i];
+                                    var prev = i < historicoActual.Count - 1 ? historicoActual[i + 1] : null;
+                                    var cambio = prev != null && (
+                                        h.Posicabs    != prev.Posicabs   ||
+                                        h.Posicrel    != prev.Posicrel   ||
+                                        h.EstaOcupado != prev.EstaOcupado);
+                                    <tr class="@(cambio ? "table-warning" : "")">
+                                        <td class="small">@h.FechaConsulta.ToLocalTime().ToString("dd/MM/yy HH:mm")</td>
+                                        <td class="small">@h.Zdesca</td>
+                                        <td class="small">@h.Zdespl</td>
+                                        <td><span class="badge @h.TipoListaBadge">@h.Ztconc</span></td>
+                                        <td>@h.EstadoTexto</td>
+                                        <td class="text-end fw-bold">@h.PuntuacionTotal.ToString("F2")</td>
+                                        <td class="text-center">@h.Posicabs</td>
+                                        <td class="text-center">@(h.Posicrel == 0 ? "—" : h.Posicrel.ToString())</td>
+                                        <td class="text-center">@(h.Posicrelpl == 0 ? "—" : h.Posicrelpl.ToString())</td>
+                                        <td>@(cambio ? "🔔" : "")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CerrarHistorico">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<CandidatoLista> todasLasListas = [];
+    private bool cargando = false;
+    private string? error;
+    private string? errorDnis;
+
+    // Selección encadenada: categoría → tipo → centro
+    private string categoriaSeleccionada = "";
+    private string tipoSeleccionado = "I";
+    private string centroSeleccionado = "";
+    private string textoBusqueda = "";
+    private string filtroEstado = "";
+
+    private DateTime? ultimaActualizacion;
+    private int totalSnapshots = 0;
+
+    private bool mostrarHistorico = false;
+    private bool cargandoHistorico = false;
+    private string? dniHistorico;
+    private List<HistoricoLista> historicoActual = [];
+
+    // Todas las categorías únicas presentes en los datos
+    private List<string> categorias => todasLasListas
+        .Select(x => x.Zdesca)
+        .Distinct()
+        .OrderBy(x => x)
+        .ToList();
+
+    // Centros filtrados por categoría seleccionada
+    private List<string> centrosInterinidad => todasLasListas
+        .Where(x => x.Ztconc == "I" && x.Zdesca == categoriaSeleccionada)
+        .Select(x => x.Zdespl)
+        .Distinct()
+        .OrderBy(x => x)
+        .ToList();
+
+    private List<string> centrosListaCorta => todasLasListas
+        .Where(x => x.Ztconc == "S" && x.Zdesca == categoriaSeleccionada)
+        .Select(x => x.Zdespl)
+        .Distinct()
+        .OrderBy(x => x)
+        .ToList();
+
+    private List<string> centrosDelTipo =>
+        tipoSeleccionado == "I" ? centrosInterinidad : centrosListaCorta;
+
+    // Ranking filtrado por categoría + tipo + centro
+    private IEnumerable<CandidatoLista> RankingActual() => todasLasListas
+        .Where(x =>
+            x.Zdesca == categoriaSeleccionada &&
+            x.Ztconc == tipoSeleccionado &&
+            x.Zdespl == centroSeleccionado &&
+            (string.IsNullOrEmpty(filtroEstado) ||
+             (filtroEstado == "ocupado"    &&  x.EstaOcupado) ||
+             (filtroEstado == "disponible" && !x.EstaOcupado)) &&
+            (string.IsNullOrEmpty(textoBusqueda) ||
+             x.NombreCompleto.Contains(textoBusqueda, StringComparison.OrdinalIgnoreCase) ||
+             x.Dni.Contains(textoBusqueda, StringComparison.OrdinalIgnoreCase)))
+        .OrderBy(x => x.Posicabs);
+
+    protected override async Task OnInitializedAsync()
+{
+    totalSnapshots = await HistoricoRepo.GetTotalSnapshotsAsync();
+    await OsakidetzaService.CargarDnisDesdeJsonAsync();
+
+    // Cargar último estado desde BBDD sin llamar a la API
+    var ultimoSnapshot = await HistoricoRepo.GetUltimoSnapshotAsync();
+    if (ultimoSnapshot.Any())
+    {
+        ultimaActualizacion = ultimoSnapshot.Max(x => x.FechaConsulta);
+        todasLasListas = ultimoSnapshot.Select(h => new CandidatoLista
+        {
+            Dni             = h.Dni,
+            NombreCompleto  = h.NombreCompleto,
+            Zdesca          = h.Zdesca,
+            Zdespl          = h.Zdespl,
+            Ztconc          = h.Ztconc,
+            Zcalexa         = h.Zcalexa,
+            Zcalexp         = h.Zcalexp,
+            Zptoeus         = h.Zptoeus,
+            Zptoaca         = h.Zptoaca,
+            Posicabs        = h.Posicabs,
+            Posicrel        = h.Posicrel,
+            Posicrelpl      = h.Posicrelpl
+        }).ToList();
+
+         OsakidetzaService.UltimosResultados = todasLasListas;
+    }
+}
+
+    // Al cambiar categoría, resetear tipo y centro
+    private void OnCategoriaChanged()
+    {
+        tipoSeleccionado   = "I";
+        centroSeleccionado = "";
+        textoBusqueda      = "";
+        filtroEstado       = "";
+    }
+
+    // Al cambiar tipo, resetear centro
+    private void SeleccionarTipo(string tipo)
+    {
+        tipoSeleccionado   = tipo;
+        centroSeleccionado = "";
+        textoBusqueda      = "";
+        filtroEstado       = "";
+    }
+
+    private async Task Recargar()
+    {
+        cargando = true; error = null; StateHasChanged();
+        try
+        {
+            todasLasListas      = await OsakidetzaService.GetTodasLasListasAsync();
+            ultimaActualizacion = DateTime.UtcNow;
+            await HistoricoRepo.GuardarSnapshotAsync(todasLasListas);
+            totalSnapshots      = await HistoricoRepo.GetTotalSnapshotsAsync();
+        }
+        catch (Exception ex) { error = $"Error al cargar datos: {ex.Message}"; }
+        finally { cargando = false; }
+    }
+
+    private async Task RecargarJson()
+    {
+        errorDnis = null;
+        try { await OsakidetzaService.CargarDnisDesdeJsonAsync(); }
+        catch { errorDnis = "Error al releer dnisfiltrados.json"; }
+    }
+
+    private async Task AbrirHistorico(string dni)
+    {
+        dniHistorico      = dni;
+        mostrarHistorico  = true;
+        cargandoHistorico = true;
+        historicoActual   = await HistoricoRepo.GetHistoricoPorDniAsync(dni);
+        cargandoHistorico = false;
+    }
+
+    private void CerrarHistorico()
+        => (mostrarHistorico, dniHistorico, historicoActual) = (false, null, []);
+}
